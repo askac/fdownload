@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flashdaten Seach and Download</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            position: relative;
+        }
+        input, button {
+            margin: 5px 0;
+            padding: 5px;
+        }
+        #file-list {
+            margin-top: 20px;
+            border-collapse: collapse;
+            width: 100%;
+        }
+        .file-item {
+            margin: 5px 0;
+        }
+        #file-list th, #file-list td {
+            border: 1px solid #ddd;
+            padding: 8px;
+        }
+        #file-list tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+        #file-list tr:hover {
+            background-color: #ddd;
+        }
+        #file-list th {
+            padding-top: 12px;
+            padding-bottom: 12px;
+            text-align: left;
+            background-color: #4CAF50;
+            color: white;
+        }
+        #timer {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            background-color: black;
+            color: red;
+            text-align: center;
+            font-size: small;
+            z-index: 1000;
+            padding: 2px 0;
+        }
+        #timer a {
+            color: yellow; /* Change link color to yellow */
+            text-decoration: underline;
+        }
+        #error-message {
+            color: red;
+            font-size: small;
+        }
+        #file-error-message {
+            color: red;
+            font-size: small;
+        }
+    </style>
+</head>
+<body>
+    <div id="timer"></div>
+    <h1>Flashdaten Seach and Download</h1>
+    
+    <div id="auth-section">
+        <h2>Authentication</h2>
+        <label for="username">Your name:</label>
+        <input type="text" id="username" required>
+        <br>
+        <label for="totp_token">Access Key:</label>
+        <input type="text" id="totp_token" required>
+        <br>
+        <button onclick="authenticate()">Authenticate</button>
+        <div id="auth-message"></div>
+        <div id="error-message"></div> <!-- Added for displaying error messages -->
+    </div>
+
+    <div id="search-section" style="display:none;">
+        <h2>Search Files</h2>
+        <label for="search_term">Search Term (lease 6 chars): </label>
+        <input type="text" id="search_term" required>
+        <br>
+        <button onclick="searchFiles()">Search</button>
+        <table id="file-list">
+            <thead>
+                <tr>
+                    <th>File Name</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody id="file-list-body">
+            </tbody>
+        </table>
+        <div id="file-error-message"></div> <!-- Added for displaying file search error messages -->
+    </div>
+
+    <script>
+        let username = '';
+        let totpToken = '';
+        const totpInterval = 60;  // TOTP interval in seconds
+
+        function startTimer() {
+            let timeLeft = totpInterval;
+            const timerDiv = document.getElementById('timer');
+            
+            const timer = setInterval(() => {
+                if (timeLeft <= 0) {
+                    clearInterval(timer);
+                    timerDiv.innerHTML = 'Access has expired! <a href="#" onclick="resetPage()">Return to main page to start again.</a>';
+                } else {
+                    timerDiv.textContent = `Access is valid for the next ${timeLeft} seconds`;
+                }
+                timeLeft -= 1;
+            }, 1000);
+        }
+
+        function resetPage() {
+            document.getElementById('auth-section').style.display = 'block';
+            document.getElementById('search-section').style.display = 'none';
+            document.getElementById('auth-message').textContent = '';
+            document.getElementById('error-message').textContent = '';
+            document.getElementById('timer').textContent = '';
+            document.getElementById('file-list-body').innerHTML = '';
+        }
+
+        function authenticate() {
+            username = document.getElementById('username').value;
+            totpToken = document.getElementById('totp_token').value;
+            const errorMessageDiv = document.getElementById('error-message');
+            errorMessageDiv.textContent = ''; // Clear previous error messages
+
+            fetch('/fdownload/auth', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ username: username, totp_token: totpToken }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                const messageDiv = document.getElementById('auth-message');
+                if (data.message) {
+                    messageDiv.textContent = 'Authentication successful';
+                    document.getElementById('auth-section').style.display = 'none';
+                    document.getElementById('search-section').style.display = 'block';
+                    startTimer();
+                } else {
+                    errorMessageDiv.textContent = `Error: ${data.error}`;
+                }
+            })
+            .catch(error => {
+                errorMessageDiv.textContent = 'Error: Failed to authenticate. Please try again.';
+                console.error('Error:', error);
+            });
+        }
+
+        function searchFiles() {
+            const searchTerm = document.getElementById('search_term').value;
+            const fileErrorMessageDiv = document.getElementById('file-error-message');
+            fileErrorMessageDiv.textContent = ''; // Clear previous error messages
+
+            fetch('/fdownload/files', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ username: username, totp_token: totpToken, search_term: searchTerm }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                const fileListBody = document.getElementById('file-list-body');
+                fileListBody.innerHTML = '';
+                if (data.files) {
+                    data.files.forEach(file => {
+                        const row = document.createElement('tr');
+                        
+                        const fileNameCell = document.createElement('td');
+                        fileNameCell.textContent = file.display_name;
+                        row.appendChild(fileNameCell);
+                        
+                        const actionCell = document.createElement('td');
+                        const downloadButton = document.createElement('button');
+                        downloadButton.textContent = 'Download';
+                        downloadButton.onclick = () => downloadFile(file.hash, file.display_name.split(': ')[1]);
+                        actionCell.appendChild(downloadButton);
+                        row.appendChild(actionCell);
+                        
+                        fileListBody.appendChild(row);
+                    });
+                } else {
+                    fileErrorMessageDiv.textContent = `Error: ${data.error}`;
+                }
+            })
+            .catch(error => {
+                fileErrorMessageDiv.textContent = 'Error: Failed to fetch files. Please try again.';
+                console.error('Error:', error);
+            });
+        }
+
+        function downloadFile(fileHash, fileName) {
+            fetch('/fdownload/download', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ username: username, totp_token: totpToken, file_hash: fileHash }),
+            })
+            .then(response => {
+                if (response.ok) {
+                    return response.blob();
+                }
+                return response.json().then(data => {
+                    throw new Error(data.error);
+                });
+            })
+            .then(blob => {
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                a.download = fileName; // Use the original file name for download
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+            })
+            .catch(error => {
+                console.error('Error:', error);
+            });
+        }
+    </script>
+</body>
+</html>
